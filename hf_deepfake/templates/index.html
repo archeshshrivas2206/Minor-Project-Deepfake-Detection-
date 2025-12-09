@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Deepfake Detector — Image / Video Test</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+
+<body>
+
+<!-- THEME TOGGLE BUTTON -->
+<button id="themeToggle" class="theme-toggle-btn">☾</button>
+
+<div class="wrapper">
+    <div class="card">
+
+        <!-- HEADER -->
+        <div class="header">
+            <h1 class="page-title">Deepfake Detector</h1>
+            <div class="sub">Upload an image or video. CPU inference may take a moment.</div>
+        </div>
+
+        <!-- CONTROLS -->
+        <div class="controls">
+
+            <!-- File chooser -->
+            <label class="input-file">
+                Choose File
+                <input type="file" id="fileInput" accept="image/*,video/*">
+            </label>
+            <span id="fileName" class="kv">No file chosen</span>
+
+            <!-- Buttons -->
+            <button id="uploadBtn" class="btn">Upload & Predict</button>
+            <button id="clearBtn" class="btn secondary">Clear</button>
+
+            <!-- Params -->
+            <div class="param">
+                <span>Threshold:</span>
+                <input type="number" id="thresholdInput" value="0.5" step="0.01">
+            </div>
+
+            <div class="param">
+                <span>Sample every N:</span>
+                <input type="number" id="sampleEveryInput" value="15">
+            </div>
+
+            <div class="param">
+                <span>Max samples:</span>
+                <input type="number" id="maxSamplesInput" value="30">
+            </div>
+        </div>
+
+        <!-- PREVIEW + RESULT -->
+        <div class="preview">
+
+            <!-- Video/Image Preview -->
+            <div class="video-box">
+                <video id="videoPreview" controls></video>
+                <img id="imagePreview" style="display:none; width:100%; border-radius:10px;">
+            </div>
+
+            <!-- RESULT PANEL -->
+            <div class="result-panel">
+                <div class="result">
+
+                    <div class="title">Result</div>
+
+                    <!-- Verdict -->
+                    <div class="verdict">
+                        <div id="verdictBadge" class="badge badge-real">WAITING</div>
+                        <div id="verdictStats" class="kv">No prediction yet.</div>
+                    </div>
+
+                    <!-- Fake bar -->
+                    <div style="margin-top:16px;">
+                        <div class="kv">Fake probability</div>
+                        <div class="pbar">
+                            <div id="fakeBar" class="fill fill-fake" style="width:0%;">0%</div>
+                        </div>
+                    </div>
+
+                    <!-- Real bar -->
+                    <div style="margin-top:14px;">
+                        <div class="kv">Real probability</div>
+                        <div class="pbar">
+                            <div id="realBar" class="fill fill-real" style="width:0%;">0%</div>
+                        </div>
+                    </div>
+
+                    <!-- Frame timeline -->
+                    <div style="margin-top:16px;">
+                        <div class="kv">Frame timeline (video only)</div>
+                        <div id="timeline" class="timeline"></div>
+                    </div>
+
+                    <!-- Raw JSON (hidden from UI) -->
+                    <pre id="rawJson" class="json-raw"></pre>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- FULLSCREEN SPINNER -->
+<div id="loadingOverlay">
+    <div class="spinner"></div>
+</div>
+
+<!-- ========================= JS ========================= -->
+<script>
+
+    /* DOM HOOKS */
+    const fileInput        = document.getElementById('fileInput');
+    const fileNameSpan     = document.getElementById('fileName');
+    const uploadBtn        = document.getElementById('uploadBtn');
+    const clearBtn         = document.getElementById('clearBtn');
+    const thresholdInput   = document.getElementById('thresholdInput');
+    const sampleEveryInput = document.getElementById('sampleEveryInput');
+    const maxSamplesInput  = document.getElementById('maxSamplesInput');
+
+    const videoPreview     = document.getElementById('videoPreview');
+    const imagePreview     = document.getElementById('imagePreview');
+
+    const verdictBadge     = document.getElementById('verdictBadge');
+    const verdictStats     = document.getElementById('verdictStats');
+    const fakeBar          = document.getElementById('fakeBar');
+    const realBar          = document.getElementById('realBar');
+    const timeline         = document.getElementById('timeline');
+    const rawJson          = document.getElementById('rawJson');
+
+    const overlay          = document.getElementById('loadingOverlay');
+    const themeToggle      = document.getElementById('themeToggle');
+
+
+    /* LOADING SPINNER */
+    function showOverlay(on) {
+        overlay.style.display = on ? "flex" : "none";
+    }
+
+    /* RESET UI */
+    function resetUI() {
+        verdictBadge.textContent = "WAITING";
+        verdictBadge.className = "badge badge-real";
+
+        verdictStats.textContent = "No prediction yet.";
+
+        fakeBar.style.width = "0%";
+        realBar.style.width = "0%";
+        fakeBar.textContent = "0%";
+        realBar.textContent = "0%";
+
+        timeline.innerHTML = "";
+        rawJson.textContent = "";
+    }
+    resetUI();
+
+
+    /* FILE PREVIEW */
+    fileInput.addEventListener("change", () => {
+        resetUI();
+        const file = fileInput.files[0];
+
+        if (!file) {
+            fileNameSpan.textContent = "No file chosen";
+            videoPreview.src = "";
+            imagePreview.style.display = "none";
+            videoPreview.style.display = "block";
+            return;
+        }
+
+        fileNameSpan.textContent = file.name;
+        const url = URL.createObjectURL(file);
+
+        if (file.type.startsWith("video/")) {
+            videoPreview.src = url;
+            videoPreview.style.display = "block";
+            imagePreview.style.display = "none";
+
+        } else {
+            imagePreview.src = url;
+            imagePreview.style.display = "block";
+            videoPreview.style.display = "none";
+        }
+    });
+
+
+    /* CLEAR BUTTON */
+    clearBtn.addEventListener("click", () => {
+        fileInput.value = "";
+        fileNameSpan.textContent = "No file chosen";
+        videoPreview.src = "";
+        imagePreview.style.display = "none";
+        videoPreview.style.display = "block";
+        resetUI();
+    });
+
+
+    /* UPLOAD & PREDICT */
+    uploadBtn.addEventListener("click", async () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        const form = new FormData();
+        form.append("file", file);
+
+        const isVideo = file.type.startsWith("video/");
+
+        let endpoint = "/predict_image";
+        if (isVideo) {
+            endpoint = "/predict_video";
+            form.append("sample_every_n", sampleEveryInput.value);
+            form.append("max_samples", maxSamplesInput.value);
+            form.append("threshold", thresholdInput.value);
+        }
+
+        showOverlay(true);
+
+        try {
+            const res = await fetch(endpoint, { method: "POST", body: form });
+            const data = await res.json();
+            showOverlay(false);
+            renderResult(data, isVideo);
+
+        } catch (err) {
+            showOverlay(false);
+            verdictStats.textContent = "Error contacting backend.";
+            console.error(err);
+        }
+    });
+
+
+    /* RENDER RESULTS */
+    function renderResult(data, isVideo) {
+
+        rawJson.textContent = JSON.stringify(data, null, 2);
+
+        let fakeProb = 0;
+
+        if (isVideo) {
+            fakeProb = data.mean_smoothed ??
+                       data.mean_fake ??
+                       data.max_fake ??
+                       0;
+        } else {
+            fakeProb = data.fake_score ?? 0;
+        }
+
+        fakeProb = Math.min(Math.max(fakeProb, 0), 1);
+        const realProb = 1 - fakeProb;
+
+        const fPct = Math.round(fakeProb * 100);
+        const rPct = Math.round(realProb * 100);
+
+        fakeBar.style.width = fPct + "%";
+        realBar.style.width = rPct + "%";
+
+        fakeBar.textContent = fPct + "%";
+        realBar.textContent = rPct + "%";
+
+        const verdict = data.verdict || (fakeProb >= 0.5 ? "FAKE" : "REAL");
+        verdictBadge.textContent = verdict;
+        verdictBadge.className = "badge " + (verdict === "FAKE" ? "badge-fake" : "badge-real");
+
+        /* Timeline */
+        if (isVideo && Array.isArray(data.frames)) {
+            timeline.innerHTML = "";
+            data.frames.forEach(fr => {
+                const div = document.createElement("div");
+                div.className = "tick " + (fr.fake_score >= 0.5 ? "fake" : "real");
+                timeline.appendChild(div);
+            });
+
+            verdictStats.textContent =
+                `Video verdict: ${verdict}. Fake mean ≈ ${fPct}%. Frames: ${data.sampled_frames}`;
+        } else {
+            verdictStats.textContent =
+                `Image verdict: ${verdict}. Fake probability ≈ ${fPct}%.`;
+        }
+    }
+
+
+    /* THEME TOGGLE BUTTON LOGIC */
+    themeToggle.addEventListener("click", () => {
+        document.body.classList.toggle("light-mode");
+        themeToggle.textContent =
+            document.body.classList.contains("light-mode") ? "☀" : "☾";
+    });
+
+</script>
+
+</body>
+</html>
